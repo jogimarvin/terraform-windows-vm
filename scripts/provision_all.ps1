@@ -1,5 +1,6 @@
 # === Enable WinRM (Only if not already running) ===
 if ((Get-Service winrm).Status -ne 'Running') {
+    Write-Output "Enabling WinRM..."
     winrm quickconfig -quiet
     winrm set winrm/config/service/auth '@{Basic="true"}'
     winrm set winrm/config/service '@{AllowUnencrypted="true"}'
@@ -9,14 +10,17 @@ if ((Get-Service winrm).Status -ne 'Running') {
 
 # === Install AD DS (Only if not installed) ===
 $adInstalled = Get-WindowsFeature AD-Domain-Services
-if ($adInstalled.Installed -eq $false) {
+if (-not $adInstalled.Installed) {
+    Write-Output "Installing AD DS..."
     Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
 }
 
 # === Promote to Domain Controller (Only if not already promoted) ===
 try {
     $domain = Get-ADDomain -ErrorAction Stop
+    Write-Output "Domain already exists: $($domain.Name)"
 } catch {
+    Write-Output "Promoting server to Domain Controller..."
     Import-Module ADDSDeployment
     Install-ADDSForest `
         -DomainName "rocku.com" `
@@ -31,14 +35,25 @@ try {
         -Force:$true `
         -SafeModeAdministratorPassword (ConvertTo-SecureString "P@ssword1234!" -AsPlainText -Force)
 
-    # This triggers a reboot — so exit the script after promotion
-    exit
+    exit  # Server will reboot after domain promotion
+}
+
+# === Set up logging ===
+$logPath = "C:\Logs\user_provisioning.log"
+if (-not (Test-Path "C:\Logs")) { New-Item -Path "C:\Logs" -ItemType Directory -Force }
+
+function Log($msg) {
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - $msg" | Out-File -FilePath $logPath -Append
 }
 
 # === User Lifecycle Provisioning ===
 $excelPath = ".\users.xlsx"
 if (Test-Path $excelPath) {
     try {
+        Write-Output "Starting user provisioning..."
+        Log "Starting user provisioning from $excelPath"
+
         Import-Module ActiveDirectory
         $excel = New-Object -ComObject Excel.Application
         $workbook = $excel.Workbooks.Open($excelPath)
@@ -46,28 +61,105 @@ if (Test-Path $excelPath) {
 
         $row = 2
         while ($sheet.Cells.Item($row, 1).Value() -ne $null) {
-            $action = $sheet.Cells.Item($row, 1).Value()
-            $username = $sheet.Cells.Item($row, 2).Value()
-            $fullname = $sheet.Cells.Item($row, 3).Value()
-            $ou = "OU=Users,DC=rocku,DC=com"
+            $action     = $sheet.Cells.Item($row, 1).Value()
+            $username   = $sheet.Cells.Item($row, 2).Value()
+            $firstName  = $sheet.Cells.Item($row, 3).Value()
+            $lastName   = $sheet.Cells.Item($row, 4).Value()
+            $password   = $sheet.Cells.Item($row, 5).Value()
+            $department = $sheet.Cells.Item($row, 6).Value()
 
-            if ($action -eq "Joiner" -and -not (Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue)) {
-                Write-Output "Creating user: $username"
-                New-ADUser -Name $fullname -SamAccountName $username -AccountPassword (ConvertTo-SecureString "P@ssword123" -AsPlainText -Force) -Enabled $true -Path $ou
-            } elseif ($action -eq "Mover") {
-                Write-Output "Updating user: $username (Mover)"
-                Set-ADUser -Identity $username -Department "NewDept"
-            } elseif ($action -eq "Leaver") {
-                Write-Output "Disabling user: $username"
-                Disable-ADAccount -Identity $username
+            $fullName = "$firstName $lastName"
+            $userPrincipalName = "$username@rocku.com"
+            $ou = "OU=$department,DC=rocku,DC=com"
+
+            switch ($action) {
+                "Joiner" {
+                    # Check if user exists
+                    if (Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue) {
+                        Write-Warning "User $username already exists. Skipping Joiner action."
+                        Log "Skipped Joiner: User $username already exists"
+                        $row++
+                        continue
+                    }
+
+                    # Validate OU (no auto-create!)
+                    $ouExists = Get-ADOrganizationalUnit -LDAPFilter "(distinguishedName=$ou)" -ErrorAction SilentlyContinue
+                    if (-not $ouExists) {
+                        Write-Warning "⛔ OU '$ou' does not exist. Skipping user $username."
+                        Log "⛔ OU does not exist for $username: $ou"
+                        $row++
+                        continue
+                    }
+
+                    # Create user
+                    New-ADUser `
+                        -Name $fullName `
+                        -SamAccountName $username `
+                        -UserPrincipalName $userPrincipalName `
+                        -GivenName $firstName `
+                        -Surname $lastName `
+                        -Path $ou `
+                        -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
+                        -Enabled $true
+
+                    Write-Output "✅ Created user: $username"
+                    Log "✅ Created user: $username in OU: $ou"
+                }
+
+                "Mover" {
+                    try {
+                        $userObj = Get-ADUser -Filter "SamAccountName -eq '$username'" -Properties DistinguishedName
+                        $newOU = $ou
+
+                        if (-not (Get-ADOrganizationalUnit -LDAPFilter "(distinguishedName=$newOU)" -ErrorAction SilentlyContinue)) {
+                            Write-Warning "⛔ Target OU '$newOU' does not exist. Skipping mover for user $username."
+                            Log "⛔ Mover skipped. OU does not exist for $username: $newOU"
+                            $row++
+                            continue
+                        }
+
+                        Move-ADObject -Identity $userObj.DistinguishedName -TargetPath $newOU
+                        Write-Output "🔁 Moved user: $username to $newOU"
+                        Log "Moved user: $username to $newOU"
+                    } catch {
+                        Write-Warning "Failed to move user $username. $_"
+                        Log "Failed to move user $username: $_"
+                    }
+                }
+
+                "Leaver" {
+                    try {
+                        Disable-ADAccount -Identity $username
+                        Write-Output "🛑 Disabled user: $username"
+                        Log "Disabled user: $username"
+                    } catch {
+                        Write-Warning "Failed to disable user $username. $_"
+                        Log "Failed to disable user $username: $_"
+                    }
+                }
+
+                default {
+                    Write-Warning "Unknown action '$action' for user $username. Skipping."
+                    Log "Skipped unknown action '$action' for $username"
+                }
             }
 
             $row++
         }
-
-        $workbook.Close($false)
-        $excel.Quit()
     } catch {
-        Write-Error "Error processing users.xlsx: $_"
+        Write-Error "❌ Error processing Excel file: $_"
+        Log "❌ Error processing Excel file: $_"
+    } finally {
+        if ($workbook) { $workbook.Close($false) }
+        if ($excel) { $excel.Quit() }
+
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sheet)    | Out-Null
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel)    | Out-Null
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
     }
+} else {
+    Write-Warning "Excel file not found at: $excelPath"
+    Log "Excel file not found: $excelPath"
 }
