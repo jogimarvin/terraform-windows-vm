@@ -35,6 +35,22 @@ try {
         -Force:$true `
         -SafeModeAdministratorPassword (ConvertTo-SecureString "P@ssword1234!" -AsPlainText -Force)
 
+    # Import AD module to create OUs
+    Import-Module ActiveDirectory
+
+    # List of OUs to create
+    $ousToCreate = @("Sales", "HR", "IT", "Finance")
+
+    foreach ($ouName in $ousToCreate) {
+        $ouDn = "OU=$ouName,DC=rocku,DC=com"
+        if (-not (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ouDn'" -ErrorAction SilentlyContinue)) {
+            New-ADOrganizationalUnit -Name $ouName -Path "DC=rocku,DC=com"
+            Write-Output "Created OU: $ouName"
+        } else {
+            Write-Output "OU $ouName already exists, skipping creation."
+        }
+    }
+
     exit  # Server will reboot after domain promotion
 }
 
