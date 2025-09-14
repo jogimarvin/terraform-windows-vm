@@ -92,40 +92,52 @@ if (Test-Path $excelPath) {
         
             switch ($action) {
                 "Joiner" {
+                    Log "🧪 Processing Joiner for user $username, department: $department"
+                
+                    if (-not $department) {
+                        Log "⚠️ No department for $username. Skipping."
+                        $row++
+                        continue
+                    }
+                
                     $ou = "OU=$department,DC=rocku,DC=com"
-        
-                    # Check if user exists
-                    if (Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue) {
+                
+                    $existingUser = Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue
+                    if ($existingUser) {
                         Write-Warning "User $username already exists. Skipping Joiner action."
                         Log "Skipped Joiner: User $username already exists"
                         $row++
                         continue
                     }
-        
-                    # Validate OU exists (no auto-create here)
+                
                     $ouExists = Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue
                     if (-not $ouExists) {
-                        Write-Warning "OU '$ou' does not exist. Skipping user $username."
-                        Log "OU does not exist for $username: $ou"
+                        Write-Warning "⛔ OU '$ou' does not exist. Skipping user $username."
+                        Log "⛔ OU does not exist for user $username. OU string: $ou"
                         $row++
                         continue
                     }
-        
-                    # Create user
-                    New-ADUser `
-                        -Name $fullName `
-                        -SamAccountName $username `
-                        -UserPrincipalName $userPrincipalName `
-                        -GivenName $firstName `
-                        -Surname $lastName `
-                        -Path $ou `
-                        -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
-                        -Enabled $true
-        
-                    Write-Output "Created user: $username"
-                    Log "Created user: $username in OU: $ou"
+                
+                    # Proceed to create user
+                    try {
+                        New-ADUser `
+                            -Name "$firstName $lastName" `
+                            -SamAccountName $username `
+                            -UserPrincipalName "$username@rocku.com" `
+                            -GivenName $firstName `
+                            -Surname $lastName `
+                            -Path $ou `
+                            -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
+                            -Enabled $true
+                
+                        Write-Output "✅ Created user: $username"
+                        Log "✅ Created user: $username in OU: $ou"
+                    } catch {
+                        Write-Warning "❌ Failed to create user $username: $_"
+                        Log "❌ Failed to create user $username: $_"
+                    }
                 }
-        
+
                 "Mover" {
                     $ou = "OU=$newDepartment,DC=rocku,DC=com"
         
