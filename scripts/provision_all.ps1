@@ -76,20 +76,24 @@ if (Test-Path $excelPath) {
         $sheet = $workbook.Sheets.Item(1)
 
         $row = 2
+# ...[previous code above remains unchanged]...
+        
         while ($sheet.Cells.Item($row, 1).Value() -ne $null) {
-            $action     = $sheet.Cells.Item($row, 1).Value()
-            $username   = $sheet.Cells.Item($row, 2).Value()
-            $firstName  = $sheet.Cells.Item($row, 3).Value()
-            $lastName   = $sheet.Cells.Item($row, 4).Value()
-            $password   = $sheet.Cells.Item($row, 5).Value()
-            $department = $sheet.Cells.Item($row, 6).Value()
-
+            $action       = $sheet.Cells.Item($row, 1).Value()
+            $username     = $sheet.Cells.Item($row, 2).Value()
+            $firstName    = $sheet.Cells.Item($row, 3).Value()
+            $lastName     = $sheet.Cells.Item($row, 4).Value()
+            $password     = $sheet.Cells.Item($row, 5).Value()
+            $department   = $sheet.Cells.Item($row, 6).Value()
+            $newDepartment= $sheet.Cells.Item($row, 7).Value()  # New column for mover
+        
             $fullName = "$firstName $lastName"
             $userPrincipalName = "$username@rocku.com"
-            $ou = "OU=$department,DC=rocku,DC=com"
-
+        
             switch ($action) {
                 "Joiner" {
+                    $ou = "OU=$department,DC=rocku,DC=com"
+        
                     # Check if user exists
                     if (Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue) {
                         Write-Warning "User $username already exists. Skipping Joiner action."
@@ -97,16 +101,16 @@ if (Test-Path $excelPath) {
                         $row++
                         continue
                     }
-
-                    # Validate OU (no auto-create!)
-                    $ouExists = Get-ADOrganizationalUnit -LDAPFilter "(distinguishedName=$ou)" -ErrorAction SilentlyContinue
+        
+                    # Validate OU exists (no auto-create here)
+                    $ouExists = Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue
                     if (-not $ouExists) {
                         Write-Warning "⛔ OU '$ou' does not exist. Skipping user $username."
                         Log "⛔ OU does not exist for $username: $ou"
                         $row++
                         continue
                     }
-
+        
                     # Create user
                     New-ADUser `
                         -Name $fullName `
@@ -117,32 +121,34 @@ if (Test-Path $excelPath) {
                         -Path $ou `
                         -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
                         -Enabled $true
-
+        
                     Write-Output "✅ Created user: $username"
                     Log "✅ Created user: $username in OU: $ou"
                 }
-
+        
                 "Mover" {
+                    $ou = "OU=$newDepartment,DC=rocku,DC=com"
+        
                     try {
                         $userObj = Get-ADUser -Filter "SamAccountName -eq '$username'" -Properties DistinguishedName
-                        $newOU = $ou
-
-                        if (-not (Get-ADOrganizationalUnit -LDAPFilter "(distinguishedName=$newOU)" -ErrorAction SilentlyContinue)) {
-                            Write-Warning "⛔ Target OU '$newOU' does not exist. Skipping mover for user $username."
-                            Log "⛔ Mover skipped. OU does not exist for $username: $newOU"
+        
+                        # Validate target OU exists
+                        if (-not (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue)) {
+                            Write-Warning "⛔ Target OU '$ou' does not exist. Skipping mover for user $username."
+                            Log "⛔ Mover skipped. OU does not exist for $username: $ou"
                             $row++
                             continue
                         }
-
-                        Move-ADObject -Identity $userObj.DistinguishedName -TargetPath $newOU
-                        Write-Output "🔁 Moved user: $username to $newOU"
-                        Log "Moved user: $username to $newOU"
+        
+                        Move-ADObject -Identity $userObj.DistinguishedName -TargetPath $ou
+                        Write-Output "🔁 Moved user: $username to $ou"
+                        Log "Moved user: $username to $ou"
                     } catch {
                         Write-Warning "Failed to move user $username. $_"
                         Log "Failed to move user $username: $_"
                     }
                 }
-
+        
                 "Leaver" {
                     try {
                         Disable-ADAccount -Identity $username
@@ -153,15 +159,16 @@ if (Test-Path $excelPath) {
                         Log "Failed to disable user $username: $_"
                     }
                 }
-
+        
                 default {
                     Write-Warning "Unknown action '$action' for user $username. Skipping."
                     Log "Skipped unknown action '$action' for $username"
                 }
             }
-
+        
             $row++
         }
+
     } catch {
         Write-Error "❌ Error processing Excel file: $_"
         Log "❌ Error processing Excel file: $_"
