@@ -64,7 +64,7 @@ function Log($msg) {
 }
 
 # === User Lifecycle Provisioning ===
-$excelPath = ".\users.xlsx"
+$excelPath = ".\user.xlsx"
 if (Test-Path $excelPath) {
     try {
         Write-Output "Starting user provisioning..."
