@@ -105,8 +105,8 @@ if (Test-Path $excelPath) {
                     # Validate OU exists (no auto-create here)
                     $ouExists = Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue
                     if (-not $ouExists) {
-                        Write-Warning "⛔ OU '$ou' does not exist. Skipping user $username."
-                        Log "⛔ OU does not exist for $username: $ou"
+                        Write-Warning "OU '$ou' does not exist. Skipping user $username."
+                        Log "OU does not exist for $username: $ou"
                         $row++
                         continue
                     }
@@ -122,8 +122,8 @@ if (Test-Path $excelPath) {
                         -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
                         -Enabled $true
         
-                    Write-Output "✅ Created user: $username"
-                    Log "✅ Created user: $username in OU: $ou"
+                    Write-Output "Created user: $username"
+                    Log "Created user: $username in OU: $ou"
                 }
         
                 "Mover" {
@@ -134,14 +134,14 @@ if (Test-Path $excelPath) {
         
                         # Validate target OU exists
                         if (-not (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue)) {
-                            Write-Warning "⛔ Target OU '$ou' does not exist. Skipping mover for user $username."
-                            Log "⛔ Mover skipped. OU does not exist for $username: $ou"
+                            Write-Warning "Target OU '$ou' does not exist. Skipping mover for user $username."
+                            Log "Mover skipped. OU does not exist for $username: $ou"
                             $row++
                             continue
                         }
         
                         Move-ADObject -Identity $userObj.DistinguishedName -TargetPath $ou
-                        Write-Output "🔁 Moved user: $username to $ou"
+                        Write-Output "Moved user: $username to $ou"
                         Log "Moved user: $username to $ou"
                     } catch {
                         Write-Warning "Failed to move user $username. $_"
@@ -152,7 +152,7 @@ if (Test-Path $excelPath) {
                 "Leaver" {
                     try {
                         Disable-ADAccount -Identity $username
-                        Write-Output "🛑 Disabled user: $username"
+                        Write-Output " Disabled user: $username"
                         Log "Disabled user: $username"
                     } catch {
                         Write-Warning "Failed to disable user $username. $_"
@@ -170,8 +170,8 @@ if (Test-Path $excelPath) {
         }
 
     } catch {
-        Write-Error "❌ Error processing Excel file: $_"
-        Log "❌ Error processing Excel file: $_"
+        Write-Error "Error processing Excel file: $_"
+        Log "Error processing Excel file: $_"
     } finally {
         if ($workbook) { $workbook.Close($false) }
         if ($excel) { $excel.Quit() }
