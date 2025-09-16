@@ -5,4 +5,9 @@ $domainPassword = ConvertTo-SecureString "SuperSecretPass123!" -AsPlainText -For
 $credential = New-Object System.Management.Automation.PSCredential($domainUser, $domainPassword)
 
 # Join the computer to the domain
-Add-Computer -DomainName $domain -Credential $credential -Restart -Force
+try {
+    Add-Computer -DomainName $domain -Credential $credential -Restart -Force
+    Write-Output "Domain join successful."
+} catch {
+    Write-Error "Domain join failed: $_"
+}
